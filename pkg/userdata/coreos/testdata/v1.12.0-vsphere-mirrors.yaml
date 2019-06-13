@@ -1,4 +1,26 @@
 passwd:
+  users:
+    - name: core
+      ssh_authorized_keys:
+        - ssh-rsa AAABBB
+        - ssh-rsa CCCDDD
+
+networkd:
+  units:
+    - name: static-nic.network
+      contents: |
+        [Match]
+        # Because of difficulty predicting specific NIC names on different cloud providers,
+        # we only support static addressing on VSphere. There should be a single NIC attached
+        # that we will match by name prefix 'en' which denotes ethernet devices.
+        Name=en*
+
+        [Network]
+        DHCP=no
+        Address=192.168.81.4/24
+        Gateway=192.168.81.1
+        DNS=8.8.8.8
+
 
 systemd:
   units:
@@ -9,6 +31,12 @@ systemd:
 
     - name: docker.service
       enabled: true
+    - name: update-engine.service
+      dropins:
+        - name: 50-proxy.conf
+          contents: |
+            [Service]
+            Environment=ALL_PROXY=http://192.168.100.100:3128
 
     - name: download-healthcheck-script.service
       enabled: true
@@ -73,9 +101,9 @@ systemd:
         TimeoutStartSec=5min
         CPUAccounting=true
         MemoryAccounting=true
-        Environment=KUBELET_IMAGE=docker://k8s.gcr.io/hyperkube-amd64:v1.15.0-beta.2
+        Environment=KUBELET_IMAGE=docker://192.168.100.100:5000/kubernetes/hyperkube:v1.12.0
         Environment="RKT_RUN_ARGS=--uuid-file-save=/var/cache/kubelet-pod.uuid \
-          --insecure-options=image \
+          --insecure-options=image,http \
           --volume=resolv,kind=host,source=/etc/resolv.conf \
           --mount volume=resolv,target=/etc/resolv.conf \
           --volume cni-bin,kind=host,source=/opt/cni/bin \
@@ -98,6 +126,7 @@ systemd:
           --bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubelet.conf \
           --kubeconfig=/etc/kubernetes/kubelet.conf \
           --pod-manifest-path=/etc/kubernetes/manifests \
+          --allow-privileged=true \
           --network-plugin=cni \
           --cni-conf-dir=/etc/cni/net.d \
           --cni-bin-dir=/opt/cni/bin \
@@ -116,6 +145,7 @@ systemd:
           --protect-kernel-defaults=true \
           --cluster-dns=10.10.10.10 \
           --cluster-domain=cluster.local \
+          --pod-infra-container-image=192.168.100.100:5000/kubernetes/pause:v3.1 \
           --kube-reserved=cpu=100m,memory=100Mi,ephemeral-storage=1Gi \
           --system-reserved=cpu=100m,memory=100Mi,ephemeral-storage=1Gi
         ExecStop=-/usr/bin/rkt stop --uuid-file=/var/cache/kubelet-pod.uuid
@@ -134,6 +164,17 @@ systemd:
 
 storage:
   files:
+    - path: /etc/environment
+      filesystem: root
+      mode: 0644
+      contents:
+        inline: |
+          HTTP_PROXY=http://192.168.100.100:3128
+          http_proxy=http://192.168.100.100:3128
+          HTTPS_PROXY=http://192.168.100.100:3128
+          https_proxy=http://192.168.100.100:3128
+          NO_PROXY=192.168.1.0
+          no_proxy=192.168.1.0
 
     - path: "/etc/systemd/journald.conf.d/max_disk_use.conf"
       filesystem: root
@@ -281,7 +322,7 @@ storage:
       mode: 0644
       contents:
         inline: |
-          {"storage-driver":"overlay2","insecure-registries":[],"registry-mirrors":[]}
+          {"storage-driver":"overlay2","insecure-registries":[],"registry-mirrors":["https://registry.docker-cn.com"]}
 
     - path: /opt/bin/download.sh
       filesystem: root
